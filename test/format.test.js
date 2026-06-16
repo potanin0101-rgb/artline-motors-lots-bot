@@ -18,7 +18,6 @@ const caption = buildChannelCaption({
   driveType: "AWD",
   destinationCity: "Ростова/Москвы",
   originRegion: "США",
-  vin: "",
   note: "",
   calculation: {
     totalRub: 23500000
