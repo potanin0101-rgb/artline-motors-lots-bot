@@ -2,9 +2,11 @@ const path = require("node:path");
 const { loadEnvFile } = require("./src/env");
 const { loadConfig } = require("./src/config");
 const { calculateLotTotals } = require("./src/calculator");
+const { getRegionStepText } = require("./src/origin");
+const { getNextScheduleAt } = require("./src/schedule");
 const { createLot, getLot, listLots, updateLot } = require("./src/storage");
 const { getMonthlyStats } = require("./src/stats");
-const { buildChannelCaption, buildLotCard, buildManagerStatsMessage, moneyRub } = require("./src/format");
+const { buildChannelCaption, buildLotCard, buildManagerStatsMessage, formatDateTime, moneyRub } = require("./src/format");
 
 loadEnvFile(path.join(__dirname, ".env"));
 loadEnvFile();
@@ -17,7 +19,6 @@ const sessions = new Map();
 const LOT_STEPS = [
   "originRegion",
   "title",
-  "vin",
   "carPriceUsd",
   "engineCc",
   "horsepower",
@@ -43,7 +44,6 @@ const LOT_STEPS = [
 const STEP_TEXT = {
   originRegion: "Выбери, откуда автомобиль.",
   title: "Введи название лота.\nНапример: BMW X5 xDrive40i M Sport",
-  vin: "Введи VIN или отправь `-`, если пока пропускаем.",
   carPriceUsd: "Стоимость автомобиля в USD.\nНапример: 48500",
   engineCc: "Объем двигателя в куб. см.\nНапример: 1998",
   horsepower: "Мощность в л.с.\nНапример: 249",
@@ -53,10 +53,6 @@ const STEP_TEXT = {
   driveType: "Укажи привод.\nНапример: AWD",
   usdRub: "Курс USD/RUB для расчета.\nНапример: 92.5",
   eurRub: "Курс EUR/RUB для расчета пошлины.\nНапример: 101.3",
-  dealerBuyoutUsd: "Выкуп у дилера в USD.\nЕсли нет, отправь 0.",
-  partnerFeeUsd: "Комиссия партнера в USD.\nМожно нажать 3500 или 4500.",
-  usInlandUsd: "Доставка по США в USD.",
-  oceanUsd: "Океан в USD.\nМожно выбрать 6500 или 7500.",
   brokerRussiaUsd: "Брокер РФ в USD.\nЕсли стандартно, можно выбрать 1000.",
   labRussiaRub: "Лаборатория в рублях.\nЕсли стандартно, можно выбрать 80000.",
   destinationCity: "Куда считаем доставку по РФ?\nНапример: Москва",
@@ -65,6 +61,13 @@ const STEP_TEXT = {
   extraRub: "Прочие расходы в рублях.\nЕсли нет, отправь 0.",
   note: "Комментарий для поста.\nЕсли без комментария, отправь `-`."
 };
+
+function getStepText(step, draft) {
+  if (step === "dealerBuyoutUsd" || step === "partnerFeeUsd" || step === "usInlandUsd" || step === "oceanUsd") {
+    return getRegionStepText(step, draft.originRegion);
+  }
+  return STEP_TEXT[step];
+}
 
 function parseAmount(text) {
   const normalized = String(text || "")
@@ -110,7 +113,7 @@ function mainMenuKeyboard(session) {
   };
 }
 
-function stepKeyboard(step) {
+function stepKeyboard(step, draft = {}) {
   if (step === "originRegion") {
     return {
       inline_keyboard: [
@@ -134,7 +137,7 @@ function stepKeyboard(step) {
     };
   }
 
-  if (step === "oceanUsd") {
+  if (step === "oceanUsd" && String(draft.originRegion || "").toUpperCase() === "США") {
     return {
       inline_keyboard: [
         [
@@ -187,6 +190,17 @@ function stepKeyboard(step) {
   return null;
 }
 
+function humanizeTelegramError(method, description) {
+  const text = String(description || "");
+  if (text.includes("bot is not a member of the channel chat")) {
+    return "Бот не добавлен в канал. Добавь его в канал как администратора с правом публикации сообщений и попробуй снова.";
+  }
+  if (text.includes("not enough rights to send")) {
+    return "У бота недостаточно прав для публикации в канале. Выдай право на публикацию сообщений.";
+  }
+  return `${method}: ${text}`;
+}
+
 async function telegram(method, payload) {
   const response = await fetch(`${API_BASE}/${method}`, {
     method: "POST",
@@ -195,7 +209,7 @@ async function telegram(method, payload) {
   });
   const data = await response.json();
   if (!data.ok) {
-    throw new Error(`${method}: ${data.description}`);
+    throw new Error(humanizeTelegramError(method, data.description));
   }
   return data.result;
 }
@@ -278,27 +292,8 @@ async function askStep(chatId, session) {
     return;
   }
 
-  if (session.step === "schedule") {
-    await sendMessage(chatId, "Когда публиковать лот?", {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "Сейчас", callback_data: "schedule:now" }],
-          [{ text: "Через 1 час", callback_data: "schedule:plus1h" }],
-          [{ text: "Завтра в 10:00", callback_data: "schedule:tomorrow10" }],
-          [{ text: "Ввести вручную", callback_data: "schedule:manual" }]
-        ]
-      }
-    });
-    return;
-  }
-
-  if (session.step === "scheduleManual") {
-    await sendMessage(chatId, "Введи дату и время публикации в формате `ДД.ММ.ГГГГ ЧЧ:ММ`.\nНапример: `18.06.2026 14:30`");
-    return;
-  }
-
-  await sendMessage(chatId, STEP_TEXT[session.step], {
-    reply_markup: stepKeyboard(session.step) || undefined
+  await sendMessage(chatId, getStepText(session.step, session.draft || {}), {
+    reply_markup: stepKeyboard(session.step, session.draft || {}) || undefined
   });
 }
 
@@ -309,7 +304,6 @@ function validateStep(step, value) {
     return String(value || "").trim() ? null : "Поле не может быть пустым.";
   }
 
-  if (step === "vin") return null;
   if (step === "note") return null;
 
   if (value === null || value === undefined || Number.isNaN(value)) {
@@ -327,17 +321,6 @@ function validateStep(step, value) {
   return null;
 }
 
-function parseDateTimeInput(text) {
-  const match = String(text || "").trim().match(/^(\d{2})\.(\d{2})(?:\.(\d{4}))?\s+(\d{2}):(\d{2})$/);
-  if (!match) return null;
-
-  const [, dd, mm, yyyy, hh, min] = match;
-  const year = yyyy ? Number(yyyy) : new Date().getFullYear();
-  const date = new Date(year, Number(mm) - 1, Number(dd), Number(hh), Number(min), 0, 0);
-  if (Number.isNaN(date.getTime())) return null;
-  return date;
-}
-
 function draftPreview(draft) {
   const calculation = calculateLotTotals(draft);
   return [
@@ -352,6 +335,12 @@ function draftPreview(draft) {
 
 async function finalizeDraft(chatId, session) {
   const draft = session.draft;
+  if (!draft.scheduleAt) {
+    draft.scheduleAt = getNextScheduleAt(
+      listLots(DB_PATH, (item) => item.status === "scheduled"),
+      new Date()
+    ).toISOString();
+  }
   const calculation = calculateLotTotals(draft);
   const lot = createLot(DB_PATH, {
     ...draft,
@@ -363,7 +352,7 @@ async function finalizeDraft(chatId, session) {
   });
 
   resetDraft(session);
-  await sendMessage(chatId, `${buildLotCard(lot)}\n\nЛот сохранен в отложку.`, {
+  await sendMessage(chatId, `${buildLotCard(lot)}\n\nЛот поставлен в автоочередь.\nПубликация: ${formatDateTime(lot.scheduleAt)}\nОкно публикаций: ежедневно с 09:00 до 19:00.`, {
     reply_markup: mainMenuKeyboard(session)
   });
 }
@@ -540,18 +529,6 @@ async function handleDraftText(message, session) {
   const text = (message.text || "").trim();
   const step = session.step;
 
-  if (step === "scheduleManual") {
-    const scheduleAt = parseDateTimeInput(text);
-    if (!scheduleAt || scheduleAt <= new Date()) {
-      await sendMessage(chatId, "Дата не распознана или уже в прошлом. Используй формат `ДД.ММ.ГГГГ ЧЧ:ММ`.");
-      return;
-    }
-
-    session.draft.scheduleAt = scheduleAt.toISOString();
-    await finalizeDraft(chatId, session);
-    return;
-  }
-
   if (step === "photos") {
     const fileId = getPhotoFileId(message);
     if (!fileId) {
@@ -578,7 +555,7 @@ async function handleDraftText(message, session) {
     } else {
       session.draft[step] = text;
     }
-  } else if (step === "vin" || step === "note") {
+  } else if (step === "note") {
     session.draft[step] = text === "-" ? "" : text;
   } else {
     const value = parseAmount(text);
@@ -777,37 +754,11 @@ async function handleCallback(callbackQuery) {
   if (data.startsWith("urgency:")) {
     if (!session.draft || session.step !== "urgency") return;
     session.draft.urgency = data.split(":")[1];
-    session.step = "schedule";
-    await askStep(chatId, session);
-    return;
-  }
-
-  if (data.startsWith("schedule:")) {
-    if (!session.draft || session.step !== "schedule") return;
-    const action = data.split(":")[1];
-
-    if (action === "now") {
-      session.draft.scheduleAt = new Date().toISOString();
-      await finalizeDraft(chatId, session);
-      return;
-    }
-
-    if (action === "plus1h") {
-      session.draft.scheduleAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-      await finalizeDraft(chatId, session);
-      return;
-    }
-
-    if (action === "tomorrow10") {
-      session.draft.scheduleAt = tomorrowAtTen().toISOString();
-      await finalizeDraft(chatId, session);
-      return;
-    }
-
-    if (action === "manual") {
-      session.step = "scheduleManual";
-      await askStep(chatId, session);
-    }
+    session.draft.scheduleAt = getNextScheduleAt(
+      listLots(DB_PATH, (item) => item.status === "scheduled"),
+      new Date()
+    ).toISOString();
+    await finalizeDraft(chatId, session);
     return;
   }
 
@@ -856,6 +807,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  parseAmount,
-  parseDateTimeInput
+  parseAmount
 };
