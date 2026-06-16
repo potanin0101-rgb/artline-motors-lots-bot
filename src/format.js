@@ -91,10 +91,6 @@ function buildChannelCaption(lot) {
     lines.push("");
     lines.push(escapeHtml(lot.note));
   }
-  if (lot.vin) {
-    lines.push("");
-    lines.push(`VIN: ${escapeHtml(lot.vin)}`);
-  }
   lines.push("");
   lines.push([
     buildBrandHashtag(lot.title),
