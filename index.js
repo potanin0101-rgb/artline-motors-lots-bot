@@ -23,6 +23,8 @@ const LOT_STEPS = [
   "horsepower",
   "productionYear",
   "productionMonth",
+  "mileageKm",
+  "driveType",
   "usdRub",
   "eurRub",
   "dealerBuyoutUsd",
@@ -47,6 +49,8 @@ const STEP_TEXT = {
   horsepower: "Мощность в л.с.\nНапример: 249",
   productionYear: "Год выпуска.\nНапример: 2023",
   productionMonth: "Месяц выпуска числом от 1 до 12.\nНапример: 7",
+  mileageKm: "Пробег в километрах.\nНапример: 4400",
+  driveType: "Укажи привод.\nНапример: AWD",
   usdRub: "Курс USD/RUB для расчета.\nНапример: 92.5",
   eurRub: "Курс EUR/RUB для расчета пошлины.\nНапример: 101.3",
   dealerBuyoutUsd: "Выкуп у дилера в USD.\nЕсли нет, отправь 0.",
@@ -153,6 +157,21 @@ function stepKeyboard(step) {
     return {
       inline_keyboard: [
         [{ text: "80 000 ₽", callback_data: `step:labRussiaRub:${config.defaultLabRub}` }]
+      ]
+    };
+  }
+
+  if (step === "driveType") {
+    return {
+      inline_keyboard: [
+        [
+          { text: "AWD", callback_data: "stepText:driveType:AWD" },
+          { text: "4WD", callback_data: "stepText:driveType:4WD" }
+        ],
+        [
+          { text: "FWD", callback_data: "stepText:driveType:FWD" },
+          { text: "RWD", callback_data: "stepText:driveType:RWD" }
+        ]
       ]
     };
   }
@@ -286,7 +305,7 @@ async function askStep(chatId, session) {
 function validateStep(step, value) {
   const nowYear = new Date().getFullYear();
 
-  if (step === "originRegion" || step === "title" || step === "destinationCity") {
+  if (step === "originRegion" || step === "title" || step === "destinationCity" || step === "driveType") {
     return String(value || "").trim() ? null : "Поле не может быть пустым.";
   }
 
@@ -302,6 +321,7 @@ function validateStep(step, value) {
   if (step === "horsepower" && (value < 1 || value > 2000)) return "Мощность выглядит неверно.";
   if (step === "productionYear" && (value < 1980 || value > nowYear)) return `Год должен быть от 1980 до ${nowYear}.`;
   if (step === "productionMonth" && (value < 1 || value > 12)) return "Месяц должен быть от 1 до 12.";
+  if (step === "mileageKm" && (value < 0 || value > 1000000)) return "Пробег выглядит неверно.";
   if (value < 0 && step !== "eurRub" && step !== "usdRub") return "Сумма не может быть отрицательной.";
   if ((step === "usdRub" || step === "eurRub") && value <= 0) return "Курс должен быть больше нуля.";
   return null;
@@ -453,7 +473,7 @@ async function postLotToChannel(lot) {
       media: photoIds.map((fileId, index) => ({
         type: "photo",
         media: fileId,
-        ...(index === 0 ? { caption } : {})
+        ...(index === 0 ? { caption, parse_mode: "HTML" } : {})
       }))
     });
 
@@ -464,14 +484,17 @@ async function postLotToChannel(lot) {
     const result = await telegram("sendPhoto", {
       chat_id: config.channelId,
       photo: photoIds[0],
-      caption
+      caption,
+      parse_mode: "HTML"
     });
     return result.message_id;
   }
 
   const result = await telegram("sendMessage", {
     chat_id: config.channelId,
-    text: caption
+    text: caption,
+    parse_mode: "HTML",
+    disable_web_page_preview: true
   });
   return result.message_id;
 }
@@ -544,13 +567,17 @@ async function handleDraftText(message, session) {
     return;
   }
 
-  if (step === "originRegion" || step === "title" || step === "destinationCity") {
+  if (step === "originRegion" || step === "title" || step === "destinationCity" || step === "driveType") {
     const error = validateStep(step, text);
     if (error) {
       await sendMessage(chatId, error);
       return;
     }
-    session.draft[step] = step === "originRegion" ? text.toUpperCase() : text;
+    if (step === "originRegion" || step === "driveType") {
+      session.draft[step] = text.toUpperCase();
+    } else {
+      session.draft[step] = text;
+    }
   } else if (step === "vin" || step === "note") {
     session.draft[step] = text === "-" ? "" : text;
   } else {
@@ -733,7 +760,8 @@ async function handleCallback(callbackQuery) {
   if (data.startsWith("stepText:")) {
     const [, key, ...valueParts] = data.split(":");
     if (!session.draft || session.step !== key) return;
-    session.draft[key] = valueParts.join(":");
+    const value = valueParts.join(":");
+    session.draft[key] = key === "originRegion" || key === "driveType" ? value.toUpperCase() : value;
     session.step = nextLotStep(key);
     await askStep(chatId, session);
     return;
