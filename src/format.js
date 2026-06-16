@@ -30,27 +30,84 @@ function formatDateTime(dateValue) {
   return `${parts.join(".")} ${time}`;
 }
 
+function formatNumberWithDots(value) {
+  return Math.round(value || 0).toLocaleString("ru-RU").replace(/\s/g, ".");
+}
+
+function formatRubTight(value) {
+  return `${formatNumberWithDots(value)}₽`;
+}
+
+function formatEngineLiters(engineCc) {
+  return `${(Number(engineCc || 0) / 1000).toFixed(1)}L`;
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buildOriginHashtag(originRegion) {
+  const map = {
+    "США": "#США",
+    "ОАЭ": "#ОАЭ",
+    "ЮЖНАЯ КОРЕЯ": "#ЮЖНАЯ_КОРЕЯ",
+    "КИТАЙ": "#КИТАЙ",
+    "ЕВРОПА": "#ЕВРОПА"
+  };
+  return map[originRegion] || "#АВТО";
+}
+
+function buildBudgetHashtag(totalRub) {
+  const budgetMillions = Math.ceil(Number(totalRub || 0) / 1000000);
+  return `#от_${Math.max(1, budgetMillions)}_млн`;
+}
+
+function buildBrandHashtag(title) {
+  const firstWord = String(title || "")
+    .trim()
+    .split(/\s+/)[0]
+    .split("-")[0]
+    .replace(/[^\p{L}\p{N}]/gu, "");
+
+  if (!firstWord) return "#АВТО";
+  return `#${firstWord.toUpperCase()}`;
+}
+
 function buildChannelCaption(lot) {
   const lines = [];
-  lines.push(lot.title);
-  if (lot.originRegion) lines.push(`Откуда авто: ${lot.originRegion}`);
-  lines.push(`Срочность: ${urgencyLabel(lot.urgency)}`);
-  if (lot.vin) lines.push(`VIN: ${lot.vin}`);
-  lines.push(`Стоимость авто: ${moneyUsd(lot.carPriceUsd)}`);
-  lines.push(`Курс: USD ${lot.usdRub}, EUR ${lot.eurRub}`);
-  lines.push(`Расходы до РФ: ${moneyUsd(lot.dealerBuyoutUsd + lot.partnerFeeUsd + lot.usInlandUsd + lot.oceanUsd + lot.brokerRussiaUsd)}`);
-  lines.push(`Пошлина: ${moneyRub(lot.calculation.rubCosts.dutyRub)}`);
-  lines.push(`Таможенное оформление: ${moneyRub(lot.calculation.rubCosts.clearanceFeeRub)}`);
-  lines.push(`Утильсбор: ${moneyRub(lot.calculation.rubCosts.utilizationRub)}`);
-  lines.push(`Лаборатория: ${moneyRub(lot.labRussiaRub)}`);
-  lines.push(`Доставка до ${lot.destinationCity}: ${moneyRub(lot.destinationDeliveryRub)}`);
-  lines.push(`Комиссия: ${moneyRub(lot.managerCommissionRub)}`);
-  if (lot.extraRub) lines.push(`Прочие расходы: ${moneyRub(lot.extraRub)}`);
-  lines.push(`Итог под ключ: ${moneyRub(lot.calculation.totalRub)}`);
+  lines.push(escapeHtml(lot.title));
+  lines.push("");
+  lines.push(`▪️Год выпуска: ${escapeHtml(lot.productionYear)}`);
+  lines.push(`▪️Пробег: ${escapeHtml(formatNumberWithDots(lot.mileageKm))} км`);
+  lines.push(`▪️Двигатель: ${escapeHtml(formatEngineLiters(lot.engineCc))}`);
+  lines.push(`▪️Привод: ${escapeHtml(lot.driveType)}`);
+  lines.push("");
+  lines.push(`💸 Стоимость данного авто выйдет под ключ до ${escapeHtml(lot.destinationCity)} - ${escapeHtml(formatRubTight(lot.calculation.totalRub))} в рублях по курсу на сегодня.`);
   if (lot.note) {
     lines.push("");
-    lines.push(lot.note);
+    lines.push(escapeHtml(lot.note));
   }
+  if (lot.vin) {
+    lines.push("");
+    lines.push(`VIN: ${escapeHtml(lot.vin)}`);
+  }
+  lines.push("");
+  lines.push([
+    buildBrandHashtag(lot.title),
+    buildBudgetHashtag(lot.calculation.totalRub),
+    buildOriginHashtag(lot.originRegion)
+  ].join(" "));
+  lines.push("");
+  lines.push("💬 По всем вопросам пишите или звоните:");
+  lines.push("");
+  lines.push("☎️ +79381597555");
+  lines.push('📲 <a href="https://t.me/ArtLine_Motors_Garik">Telegram</a> / <a href="https://wa.me/79381597555">WhatsApp</a>');
+  lines.push("");
+  lines.push('🖥 <a href="http://artlinemotors.su/">artlinemotors.su</a>');
   return lines.join("\n");
 }
 
@@ -87,7 +144,13 @@ module.exports = {
   buildChannelCaption,
   buildLotCard,
   buildManagerStatsMessage,
+  buildBudgetHashtag,
+  buildBrandHashtag,
+  buildOriginHashtag,
+  escapeHtml,
   formatDateTime,
+  formatEngineLiters,
+  formatNumberWithDots,
   moneyRub,
   moneyUsd
 };
